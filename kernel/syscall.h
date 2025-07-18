@@ -20,4 +20,7 @@
 #define SYS_link   19
 #define SYS_mkdir  20
 #define SYS_close  21
-#define SYS_stacktrace 22
+
+// Custom syscalls - keep numbers sequential and grouped
+#define SYS_stacktrace    22  // first custom syscall  
+#define SYS_getreadcount  23  // second custom syscall

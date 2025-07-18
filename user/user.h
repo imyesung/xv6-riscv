@@ -22,6 +22,9 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
+
+// Custom system calls
+int getreadcount(void); 
 int stacktrace(uint64 *buf, int max);
 
 // ulib.c

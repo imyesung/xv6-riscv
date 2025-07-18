@@ -15,6 +15,7 @@ sub entry {
     print " ret\n";
 }
 	
+# Standard syscalls
 entry("fork");
 entry("exit");
 entry("wait");
@@ -36,4 +37,7 @@ entry("getpid");
 entry("sbrk");
 entry("sleep");
 entry("uptime");
+
+# Custom syscalls - keep them grouped
 entry("stacktrace");
+entry("getreadcount");

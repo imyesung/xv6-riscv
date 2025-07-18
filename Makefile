@@ -142,6 +142,7 @@ UPROGS=\
     $U/_wc\
     $U/_zombie\
     $U/_stacktrace\
+    $U/_getreadcount  # Add read count test program
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)

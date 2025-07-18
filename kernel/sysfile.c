@@ -72,10 +72,15 @@ sys_read(void)
   int n;
   uint64 p;
 
-  argaddr(1, &p);
-  argint(2, &n);
+  // Simple increment - no atomics needed in xv6's single-threaded context
+  read_count++;
+
   if(argfd(0, 0, &f) < 0)
     return -1;
+    
+  argint(2, &n);
+  argaddr(1, &p);
+  
   return fileread(f, p, n);
 }
 

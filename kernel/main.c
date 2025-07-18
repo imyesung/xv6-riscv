@@ -4,6 +4,10 @@
 #include "riscv.h"
 #include "defs.h"
 
+// Global syscall statistics
+int read_count = 0;     // Count read() syscalls since boot
+// Add other syscall stats here if needed
+
 volatile static int started = 0;
 
 // start() jumps here in supervisor mode on all CPUs.
@@ -13,8 +17,14 @@ main()
   if(cpuid() == 0){
     consoleinit();
     printfinit();
-    printf("\n");
     printf("xv6 kernel is booting\n");
+    printf("\n");
+    printf("    +---------------+\n");
+    printf("    |  |\\_/|/   []  |\n");
+    printf("    |  |o.o| \\  []  |\n");
+    printf("    |  |/|\\|/   []  |\n");
+    printf("    |  |___|    []  |\n");
+    printf("    +---------------+\n");
     printf("\n");
     kinit();         // physical page allocator
     kvminit();       // create kernel page table
