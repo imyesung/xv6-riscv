@@ -91,3 +91,41 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+uint64
+sys_stacktrace(void)
+{
+  uint64 u_buf;
+  int max;
+  
+  argaddr(0, &u_buf);
+  argint(1, &max);
+
+  if(max <= 0 || max > 16)
+    return -1;
+    
+  struct proc *p = myproc();
+  uint64 fp = (uint64)p->trapframe->s0;
+  int depth = 0;
+  
+  while(fp && depth < max) {
+    uint64 ra_addr = fp - 8;
+    uint64 ra;
+    
+    if(copyin(p->pagetable, (char*)&ra, ra_addr, sizeof(ra)) < 0)
+      break;
+      
+    if(copyout(p->pagetable, u_buf + depth * sizeof(uint64), 
+               (char*)&ra, sizeof(ra)) < 0)
+      return -1;
+      
+    uint64 prev_fp;
+    if(copyin(p->pagetable, (char*)&prev_fp, fp - 16, sizeof(prev_fp)) < 0)
+      break;
+      
+    fp = prev_fp;
+    depth++;
+  }
+  
+  return depth;
+}
