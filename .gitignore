@@ -15,3 +15,19 @@ mkfs
 kernel/kernel
 user/usys.S
 .gdbinit
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+
+# IDE
+.vscode/
+*.code-workspace
