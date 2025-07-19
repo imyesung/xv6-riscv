@@ -72,15 +72,18 @@ sys_read(void)
   int n;
   uint64 p;
 
-  // Simple increment - no atomics needed in xv6's single-threaded context
-  read_count++;
-
+  // Validate file descriptor first
   if(argfd(0, 0, &f) < 0)
     return -1;
     
-  argint(2, &n);
+  // Get remaining arguments (these don't fail)
   argaddr(1, &p);
-  
+  argint(2, &n);
+
+  // Count valid read calls
+  read_count++;
+
+  // Do the actual work
   return fileread(f, p, n);
 }
 
