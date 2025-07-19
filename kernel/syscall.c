@@ -103,10 +103,11 @@ extern uint64 sys_mkdir(void);
 extern uint64 sys_close(void);
 
 // Custom syscalls - keep them grouped
-extern uint64 sys_stacktrace(void);    // Your first custom syscall
-extern uint64 sys_getreadcount(void);  // Your second custom syscall
+extern uint64 sys_stacktrace(void);
+extern uint64 sys_getreadcount(void);
+extern uint64 sys_settickets(void);
+extern uint64 sys_getpinfo(void);
 
-// In the syscalls array, also keep them together
 static uint64 (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
 [SYS_exit]    sys_exit,
@@ -129,8 +130,10 @@ static uint64 (*syscalls[])(void) = {
 [SYS_uptime]  sys_uptime,
 [SYS_write]   sys_write,
 [SYS_close]   sys_close,
-[SYS_stacktrace] sys_stacktrace,        // Custom syscalls grouped
+[SYS_stacktrace] sys_stacktrace,
 [SYS_getreadcount] sys_getreadcount,
+[SYS_settickets] sys_settickets,
+[SYS_getpinfo] sys_getpinfo,
 };
 
 void

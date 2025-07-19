@@ -5,6 +5,7 @@
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
+#include "pstat.h"
 
 uint64
 sys_exit(void)
@@ -136,4 +137,55 @@ sys_stacktrace(void)
   }
   
   return depth;
+}
+
+uint64
+sys_settickets(void)
+{
+  int tickets;
+  argint(0, &tickets);
+  
+  if(tickets < 1)
+    return -1;
+    
+  struct proc *p = myproc();
+  p->tickets = tickets;
+  return 0;
+}
+
+uint64
+sys_getpinfo(void)
+{
+  uint64 addr;
+  argaddr(0, &addr);
+  
+  struct pstat ps;
+  struct proc *p;
+  
+  // Initialize the pstat structure
+  for(int i = 0; i < NPROC; i++) {
+    ps.inuse[i] = 0;
+    ps.tickets[i] = 0;
+    ps.pid[i] = 0;
+    ps.ticks[i] = 0;
+  }
+  
+  // Fill in process information
+  for(p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    int index = p - proc;
+    if(p->state != UNUSED) {
+      ps.inuse[index] = 1;
+      ps.tickets[index] = p->tickets;
+      ps.pid[index] = p->pid;
+      ps.ticks[index] = p->ticks;
+    }
+    release(&p->lock);
+  }
+  
+  // Copy to user space
+  if(copyout(myproc()->pagetable, addr, (char*)&ps, sizeof(ps)) < 0)
+    return -1;
+    
+  return 0;
 }
