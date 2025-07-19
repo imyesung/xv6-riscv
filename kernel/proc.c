@@ -155,6 +155,9 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  p->tickets = 1;  // Default: 1 ticket
+  p->ticks = 0;    // Start with 0 ticks
+
   return p;
 }
 
@@ -329,6 +332,10 @@ fork(void)
 
   acquire(&np->lock);
   np->state = RUNNABLE;
+  
+  // Inherit lottery tickets from parent
+  np->tickets = p->tickets;
+  
   release(&np->lock);
 
   return pid;
@@ -608,7 +615,7 @@ kill(int pid)
 {
   struct proc *p;
 
-  for(p = proc; p < &proc[NPROC]; p++){
+  for(p = proc; p < &proc[NCPU]; p++){
     acquire(&p->lock);
     if(p->pid == pid){
       p->killed = 1;

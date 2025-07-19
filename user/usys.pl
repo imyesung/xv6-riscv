@@ -41,3 +41,5 @@ entry("uptime");
 # Custom syscalls - keep them grouped
 entry("stacktrace");
 entry("getreadcount");
+entry("settickets");
+entry("getpinfo");
