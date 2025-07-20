@@ -57,7 +57,7 @@ procinit(void)
   initlock(&wait_lock, "wait_lock");
   
   // Initialize random number generator
-  srand(1);  // simple seed for reproducibility
+  randinit();
     
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
@@ -469,12 +469,20 @@ scheduler(void)
     // Enable interrupts to avoid deadlock
     intr_on();
     
-    // Count total tickets and find runnable processes
+    // Build array of runnable processes and count total tickets
+    struct proc *runnable[NPROC];
+    int tickets[NPROC];
+    int num_runnable = 0;
     int total_tickets = 0;
+    
+    // Single pass: collect all runnable processes atomically
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
       if(p->state == RUNNABLE) {
+        runnable[num_runnable] = p;
+        tickets[num_runnable] = p->tickets;
         total_tickets += p->tickets;
+        num_runnable++;
       }
       release(&p->lock);
     }
@@ -484,17 +492,51 @@ scheduler(void)
       continue;
     }
     
-    // Pick a random winner ticket number
-    int winner = rand() % total_tickets;
+    // Pick a random winner ticket number (0 to total_tickets-1)
+    // Use CPU ID and current time for better randomness
+    int winner = (rand() + r_time() + cpuid()) % total_tickets;
     
-    // Find the process that owns the winning ticket
+    // DEBUG: Print lottery details occasionally
+    static int debug_counter = 0;
+    if((debug_counter++ % 100) == 0) {  // More frequent debugging
+      printf("LOTTERY: total_tickets=%d, winner=%d, num_runnable=%d\n", 
+             total_tickets, winner, num_runnable);
+      printf("RUNNABLE PROCESSES: ");
+      for(int i = 0; i < num_runnable; i++) {
+        printf("PID=%d(tickets=%d) ", runnable[i]->pid, tickets[i]);
+      }
+      printf("\n");
+      
+      // NEW: Print ALL processes
+      printf("=== ALL PROCESSES ===\n");
+      struct proc *pp;
+      for(pp = proc; pp < &proc[NPROC]; pp++) {
+        acquire(&pp->lock);
+        if(pp->state != UNUSED) {
+          printf("PID=%d state=%d tickets=%d name=%s\n", 
+                 pp->pid, pp->state, pp->tickets, pp->name);
+        }
+        release(&pp->lock);
+      }
+      printf("=== END ALL PROCESSES ===\n");
+    }
+    
+    // Find the winning process from our snapshot
     int counter = 0;
-    for(p = proc; p < &proc[NPROC]; p++) {
-      acquire(&p->lock);
-      if(p->state == RUNNABLE) {
-        counter += p->tickets;
-        if(counter > winner) {
-          // Found the winner
+    for(int i = 0; i < num_runnable; i++) {
+      counter += tickets[i];
+      if(counter > winner) {
+        // Found the winner - check if still runnable and run it
+        p = runnable[i];
+        acquire(&p->lock);
+        if(p->state == RUNNABLE) {
+          // DEBUG: Log lottery selection
+          static int lottery_log_counter = 0;
+          if((lottery_log_counter++ % 50) == 0) {
+            printf("LOTTERY SELECT: CPU=%d PID=%d (tickets=%d) winner=%d counter=%d\n", 
+                   cpuid(), p->pid, tickets[i], winner, counter);
+          }
+          
           p->state = RUNNING;
           p->ticks++;
           c->proc = p;
@@ -502,11 +544,10 @@ scheduler(void)
           
           // Process has finished running
           c->proc = 0;
-          release(&p->lock);
-          break;
         }
+        release(&p->lock);
+        break;
       }
-      release(&p->lock);
     }
   }
 }
@@ -735,6 +776,7 @@ settickets(int tickets)
     return -1;
     
   acquire(&p->lock);
+  printf("DEBUG: settickets PID=%d tickets=%d->%d\n", p->pid, p->tickets, tickets);
   p->tickets = tickets;
   release(&p->lock);
   

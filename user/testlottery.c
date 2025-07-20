@@ -1,20 +1,22 @@
 #include "kernel/types.h"
 #include "kernel/stat.h"
+#include "kernel/param.h"
 #include "kernel/pstat.h"
 #include "user/user.h"
 
 #define NFORK 3
 #define WORKLOOP 3000000
-#define NSAMPLE 15
-#define SLEEP_TICKS 10
+#define NSAMPLE 30
+#define SLEEP_TICKS 5
 
-// CPU-intensive work function
+// CPU-intensive work function - pure CPU bound
 static void
 cpu_work(void) {
   volatile int i, j = 0;
-  for(i = 0; i < WORKLOOP; i++){
+  for(i = 0; i < WORKLOOP; i++){  // Back to original long loop
     j += i * i * i;
     j %= 1000;
+    // NO SLEEP - let timer interrupt handle scheduling
   }
 }
 
@@ -32,7 +34,11 @@ main(int argc, char *argv[]) {
     pid[i] = fork();
     if(pid[i] == 0){
       // Child process - silent execution to avoid output mixing
-      settickets(tickets[i]);
+      int result = settickets(tickets[i]);
+      if(result < 0) {
+        printf("ERROR: settickets(%d) failed\n", tickets[i]);
+        exit(-1);
+      }
       while(1) cpu_work();  // Infinite loop until killed
       exit(0);
     } else {
@@ -42,6 +48,9 @@ main(int argc, char *argv[]) {
 
   printf("\nSampling results:\n");
 
+  // Parent sleeps most of the time to avoid interfering with lottery
+  // Only wake up occasionally to sample results
+  
   // 2) Sampling loop with proper printf formatting
   for(int s = 0; s < NSAMPLE; s++){
     sleep(SLEEP_TICKS);
