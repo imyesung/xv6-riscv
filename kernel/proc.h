@@ -106,6 +106,6 @@ struct proc {
   char name[16];               // Process name (debugging)
   
   // Lottery scheduler fields
-  int tickets;                 // Number of lottery tickets (default: 1)
+  int tickets;                 // Number of lottery tickets
   int ticks;                   // Number of times scheduled
 };

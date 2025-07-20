@@ -7,6 +7,9 @@
 #include "proc.h"
 #include "pstat.h"
 
+// add extern declaration for proc array
+// extern struct proc proc[NPROC];
+
 uint64
 sys_exit(void)
 {
@@ -160,7 +163,6 @@ sys_getpinfo(void)
   argaddr(0, &addr);
   
   struct pstat ps;
-  struct proc *p;
   
   // Initialize the pstat structure
   for(int i = 0; i < NPROC; i++) {
@@ -170,7 +172,10 @@ sys_getpinfo(void)
     ps.ticks[i] = 0;
   }
   
-  // Fill in process information
+  // safe access to the proc array
+  extern struct proc proc[NPROC];
+  struct proc *p;
+  
   for(p = proc; p < &proc[NPROC]; p++) {
     acquire(&p->lock);
     int index = p - proc;
