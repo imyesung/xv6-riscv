@@ -143,7 +143,8 @@ UPROGS=\
     $U/_wc\
     $U/_zombie\
     $U/_stacktrace\
-    $U/_getreadcount  # Add read count test program
+    $U/_getreadcount\
+    $U/_testlottery # Add test lottery program
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)
