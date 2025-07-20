@@ -148,12 +148,7 @@ sys_settickets(void)
   int tickets;
   argint(0, &tickets);
   
-  if(tickets < 1)
-    return -1;
-    
-  struct proc *p = myproc();
-  p->tickets = tickets;
-  return 0;
+  return settickets(tickets);
 }
 
 uint64
