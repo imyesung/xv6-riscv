@@ -615,7 +615,7 @@ kill(int pid)
 {
   struct proc *p;
 
-  for(p = proc; p < &proc[NCPU]; p++){
+  for(p = proc; p < &proc[NPROC]; p++){
     acquire(&p->lock);
     if(p->pid == pid){
       p->killed = 1;
