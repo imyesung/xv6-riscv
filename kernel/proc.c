@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "pstat.h"
 
 struct cpu cpus[NCPU];
 
@@ -26,12 +27,8 @@ extern char trampoline[]; // trampoline.S
 // must be acquired before any p->lock.
 struct spinlock wait_lock;
 
-// Add to the existing process statistics structure
-struct {
-  struct spinlock lock;
-  struct proc proc[NPROC];
-  int read_calls;     // Global syscall counter
-} ptable;
+// External declaration - defined in main.c
+extern int read_count;
 
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
@@ -58,8 +55,10 @@ procinit(void)
   
   initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
-  initlock(&ptable.lock, "ptable");
-  ptable.read_calls = 0;  // Initialize here with other global state
+  
+  // Initialize random number generator
+  srand(1);  // simple seed for reproducibility
+    
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
       p->state = UNUSED;
@@ -134,6 +133,10 @@ found:
   p->pid = allocpid();
   p->state = USED;
 
+  // Initialize lottery scheduler fields
+  p->tickets = 1;
+  p->ticks = 0;
+
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     freeproc(p);
@@ -154,9 +157,6 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
-
-  p->tickets = 1;  // Default: 1 ticket
-  p->ticks = 0;    // Start with 0 ticks
 
   return p;
 }
@@ -288,6 +288,8 @@ growproc(int n)
 
 // Create a new process, copying the parent.
 // Sets up child kernel stack to return as if from fork() system call.
+// fork() 함수 전체를 아래 코드로 교체하세요.
+
 int
 fork(void)
 {
@@ -308,6 +310,9 @@ fork(void)
   }
   np->sz = p->sz;
 
+  // Set tickets for the new process.
+  np->tickets = p->tickets; // Inherit tickets from parent.
+
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
 
@@ -324,18 +329,14 @@ fork(void)
 
   pid = np->pid;
 
-  release(&np->lock);
-
+  // After all setup is done, set parent and state.
   acquire(&wait_lock);
   np->parent = p;
   release(&wait_lock);
-
-  acquire(&np->lock);
+  
   np->state = RUNNABLE;
   
-  // Inherit lottery tickets from parent
-  np->tickets = p->tickets;
-  
+  // Finally, release the lock.
   release(&np->lock);
 
   return pid;
@@ -462,36 +463,50 @@ scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
-
+  
   c->proc = 0;
   for(;;){
-    // The most recent process to run may have had interrupts
-    // turned off; enable them to avoid a deadlock if all
-    // processes are waiting.
+    // Enable interrupts to avoid deadlock
     intr_on();
-
-    int found = 0;
+    
+    // Count total tickets and find runnable processes
+    int total_tickets = 0;
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
       if(p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
-        p->state = RUNNING;
-        c->proc = p;
-        swtch(&c->context, &p->context);
-
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
-        c->proc = 0;
-        found = 1;
+        total_tickets += p->tickets;
       }
       release(&p->lock);
     }
-    if(found == 0) {
-      // nothing to run; stop running on this core until an interrupt.
-      intr_on();
-      asm volatile("wfi");
+    
+    // If no runnable processes, continue
+    if(total_tickets == 0) {
+      continue;
+    }
+    
+    // Pick a random winner ticket number
+    int winner = rand() % total_tickets;
+    
+    // Find the process that owns the winning ticket
+    int counter = 0;
+    for(p = proc; p < &proc[NPROC]; p++) {
+      acquire(&p->lock);
+      if(p->state == RUNNABLE) {
+        counter += p->tickets;
+        if(counter > winner) {
+          // Found the winner
+          p->state = RUNNING;
+          p->ticks++;
+          c->proc = p;
+          swtch(&c->context, &p->context);
+          
+          // Process has finished running
+          c->proc = 0;
+          release(&p->lock);
+          break;
+        }
+      }
+      release(&p->lock);
     }
   }
 }
@@ -708,4 +723,56 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+// Set the number of tickets for the calling process
+int
+settickets(int tickets)
+{
+  struct proc *p = myproc();
+  
+  if(tickets < 1)
+    return -1;
+    
+  acquire(&p->lock);
+  p->tickets = tickets;
+  release(&p->lock);
+  
+  return 0;
+}
+
+// Get process information for all processes
+int
+getpinfo(uint64 addr)
+{
+  struct proc *p;
+  struct pstat ps;
+  int i = 0;
+  
+  // Initialize pstat structure
+  for(int j = 0; j < NPROC; j++) {
+    ps.inuse[j] = 0;
+    ps.tickets[j] = 0;
+    ps.pid[j] = 0;
+    ps.ticks[j] = 0;
+  }
+  
+  // Fill in process information
+  for(p = proc; p < &proc[NPROC] && i < NPROC; p++) {
+    acquire(&p->lock);
+    if(p->state != UNUSED) {
+      ps.inuse[i] = 1;
+      ps.tickets[i] = p->tickets;
+      ps.pid[i] = p->pid;
+      ps.ticks[i] = p->ticks;
+      i++;
+    }
+    release(&p->lock);
+  }
+  
+  // Copy to user space
+  if(copyout(myproc()->pagetable, addr, (char*)&ps, sizeof(ps)) < 0)
+    return -1;
+    
+  return 0;
 }
