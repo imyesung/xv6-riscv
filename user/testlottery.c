@@ -46,6 +46,10 @@ main(int argc, char *argv[]) {
     }
   }
 
+  // IMPORTANT: Wait for all children to set their tickets before sampling
+  printf("\nWaiting for all processes to initialize...\n");
+  sleep(10);  // Give time for all settickets() calls to complete
+
   printf("\nSampling results:\n");
 
   // Parent sleeps most of the time to avoid interfering with lottery
