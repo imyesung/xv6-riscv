@@ -4,10 +4,11 @@
 #include "kernel/pstat.h"
 #include "user/user.h"
 
-#define NFORK 3
-#define WORKLOOP 3000000
-#define NSAMPLE 30
-#define SLEEP_TICKS 5
+#define NFORK     3      // constant for number of child processes
+#define WORKLOOP  100000000
+#define NSAMPLE   30
+#define SLEEP_TICKS 20
+#define NCHILDREN 6      // 6 > 3 CPU
 
 // CPU-intensive work function - pure CPU bound
 static void
@@ -23,26 +24,25 @@ cpu_work(void) {
 int
 main(int argc, char *argv[]) {
   struct pstat ps;
-  int pid[NFORK];
-  int tickets[NFORK] = {30, 20, 10};
+  int pid[NCHILDREN];
+  int tickets[NCHILDREN] = { 30, 20, 10, 30, 20, 10 };  // twice the original tickets
 
   printf("Lottery Scheduler Test: 3:2:1 ratio\n");
   printf("Expected: A=50%%, B=33%%, C=17%%\n\n");
+  
+  // Set parent process to have minimal tickets but still be schedulable
+  settickets(1);
 
   // 1) Create child processes - NO printf in children to avoid mixed output
-  for(int i = 0; i < NFORK; i++){
+  for(int i = 0; i < NCHILDREN; i++){
     pid[i] = fork();
     if(pid[i] == 0){
-      // Child process - silent execution to avoid output mixing
-      int result = settickets(tickets[i]);
-      if(result < 0) {
-        printf("ERROR: settickets(%d) failed\n", tickets[i]);
+      if(settickets(tickets[i]) < 0){
+        printf("ERROR: settickets(%d)\n", tickets[i]);
         exit(-1);
       }
-      while(1) cpu_work();  // Infinite loop until killed
+      while(1) cpu_work();
       exit(0);
-    } else {
-      printf("Created child %d with PID %d (%d tickets)\n", i, pid[i], tickets[i]);
     }
   }
 
