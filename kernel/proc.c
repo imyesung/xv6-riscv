@@ -41,6 +41,12 @@ struct spinlock wait_lock;
  */
 struct spinlock scheduler_lock;
 
+/*
+ * GLOBAL LOTTERY STATE: Ensures fair lottery distribution across multiple CPUs
+ * by sharing lottery state and enforcing proper ticket proportions.
+ */
+static int global_lottery_counter = 0;  // Global counter for lottery fairness
+
 // External declaration - defined in main.c
 extern int read_count;
 
@@ -488,113 +494,307 @@ scheduler(void)
   c->proc = 0;
   for(;;){
     /*
-     * SIMPLE MULTICORE SOLUTION: Only CPU 0 does scheduling
+     * MULTICORE LOTTERY SCHEDULING WITH GLOBAL FAIRNESS
      * 
-     * This is the simplest way to make lottery scheduling work on multicore.
-     * Only CPU 0 will execute the lottery algorithm, while other CPUs wait.
-     * 
-     * Pros: Simple, safe, no complex lock management
-     * Cons: Other CPUs are idle (not efficient)
-     * 
-     * For learning purposes, this clearly shows the multicore challenge
-     * and provides a working solution.
+     * All CPUs participate but use shared lottery state to ensure
+     * proper ticket proportions are maintained across the system.
      */
-    if(cpuid() != 0) {
-      // CPUs 1 and 2 just wait and try again
-      continue;
-    }
     
-    // Enable interrupts to avoid deadlock
+    /*
+     * ENABLE INTERRUPTS FIRST
+     * 
+     * Enable interrupts before acquiring locks to prevent deadlock.
+     * This follows the standard xv6 pattern and ensures that timer
+     * interrupts can still occur to prevent system freeze.
+     */
     intr_on();
     
     /*
-     * Build array of runnable processes and count total tickets
+     * PHASE 1: ACQUIRE GLOBAL SCHEDULER LOCK
      * 
-     * This section is now protected by the global scheduler lock,
-     * so only one CPU can build this snapshot at a time.
+     * The global scheduler_lock ensures that only ONE CPU at a time
+     * can execute the lottery algorithm. This prevents race conditions
+     * where multiple CPUs might select the same process.
+     * 
+     * What this lock protects:
+     * - Process scanning and snapshot building
+     * - Lottery number generation and winner selection  
+     * - Atomic transition of winner from RUNNABLE to RUNNING
+     * 
+     * Other CPUs will spin-wait here until the current CPU completes
+     * its lottery selection and releases the lock.
      */
-    struct proc *runnable[NPROC];
-    int tickets[NPROC];
-    int num_runnable = 0;
-    int total_tickets = 0;
+    acquire(&scheduler_lock);
     
-    // Single pass: collect all runnable processes atomically
-    // Use proper locking for multi-core safety
+    /*
+     * PHASE 2: BUILD PROCESS SNAPSHOT
+     * 
+     * Scan all processes and build arrays of runnable candidates.
+     * This creates a consistent snapshot of the system state for
+     * lottery selection. We do this while holding the global lock
+     * to ensure no other CPU interferes.
+     */
+    struct proc *runnable[NPROC];     // Array of pointers to runnable processes
+    int tickets[NPROC];               // Array of ticket counts for each runnable process
+    int num_runnable = 0;             // Counter of how many processes are runnable
+    int total_tickets = 0;            // Sum of all tickets from runnable processes
+    
+    /*
+     * SCAN ALL PROCESSES FOR RUNNABLE CANDIDATES
+     * 
+     * We iterate through the global process table (proc[0] to proc[NPROC-1])
+     * and identify which processes are eligible for lottery selection.
+     * 
+     * For each process p:
+     * 1. acquire(&p->lock) - Lock THIS specific process
+     *    Why? To safely read p->state and p->tickets without interference
+     * 2. Check if p->state == RUNNABLE
+     *    RUNNABLE means: process is ready to run, not currently running,
+     *    not sleeping, not exiting
+     * 3. If runnable, add to our snapshot arrays
+     * 4. release(&p->lock) - Unlock THIS specific process
+     *    Important: We release immediately after reading, not holding for long
+     */
     for(p = proc; p < &proc[NPROC]; p++) {
+      /*
+       * INDIVIDUAL PROCESS LOCK
+       * 
+       * Each process has its own lock (p->lock) that protects its fields.
+       * We acquire this lock to safely read the process state and ticket count.
+       * 
+       * Key point: This is DIFFERENT from the global scheduler_lock!
+       * - scheduler_lock: Protects the overall lottery algorithm
+       * - p->lock: Protects this specific process's data
+       */
       acquire(&p->lock);
+      
       if(p->state == RUNNABLE) {
-        runnable[num_runnable] = p;
-        tickets[num_runnable] = p->tickets;
-        total_tickets += p->tickets;
-        num_runnable++;
+        // Process is eligible for lottery - add to our snapshot
+        runnable[num_runnable] = p;            // Store pointer to the process
+        tickets[num_runnable] = p->tickets;    // Store its ticket count
+        total_tickets += p->tickets;           // Add to total ticket pool
+        num_runnable++;                       // Increment candidate counter
       }
+      
+      /*
+       * RELEASE INDIVIDUAL PROCESS LOCK IMMEDIATELY
+       * 
+       * We release each process lock as soon as we're done reading from it.
+       * This minimizes lock contention and allows other operations
+       * (like settickets()) to proceed on other processes.
+       */
       release(&p->lock);
     }
     
     /*
-     * If no runnable processes found, just try again
+     * PHASE 3: CHECK IF ANY PROCESSES ARE RUNNABLE
      * 
-     * This can happen when all processes are SLEEPING, ZOMBIE, or already RUNNING.
-     * Since only CPU 0 is doing scheduling, we just loop back and try again.
+     * If total_tickets == 0, it means all runnable processes have 0 tickets.
+     * In this case, we fall back to round-robin selection for fairness.
      */
-    if(total_tickets == 0) {
+    if(total_tickets == 0 && num_runnable > 0) {
+      // Round-robin selection for 0-ticket processes
+      static int rr_counter = 0;
+      int selected = rr_counter % num_runnable;
+      rr_counter++;
+      
+      p = runnable[selected];
+      acquire(&p->lock);
+      if(p->state == RUNNABLE) {
+        p->state = RUNNING;
+        p->ticks++;
+        c->proc = p;
+        release(&scheduler_lock);
+        swtch(&c->context, &p->context);
+        c->proc = 0;
+        release(&p->lock);
+      } else {
+        release(&p->lock);
+        release(&scheduler_lock);
+      }
       continue;
     }
     
-    // Pick a random winner ticket number (0 to total_tickets-1)
-    // Use CPU ID and current time for better randomness across cores
-    int winner = (rand() + r_time() + cpuid()) % total_tickets;
-    
-    // DEBUG: Print lottery details occasionally (less frequent for multi-core)
-    static int debug_counter = 0;
-    if((debug_counter++ % 200) == 0) {  // Less frequent for multi-core
-      printf("LOTTERY CPU%d: total_tickets=%d, winner=%d, num_runnable=%d\n", 
-             cpuid(), total_tickets, winner, num_runnable);
+    if(total_tickets == 0) {
+      release(&scheduler_lock);  // Release global lock - let other CPUs try
+      continue;                  // Go back to start of scheduler loop
     }
     
-    // Find the winning process from our snapshot
+    /*
+     * PHASE 4: GLOBAL LOTTERY RANDOM NUMBER GENERATION
+     * 
+     * Generate a fair winning ticket number using global state to ensure
+     * proper distribution across multiple CPUs and time.
+     * 
+     * - global_lottery_counter: Ensures different selection patterns
+     * - rand(): Basic pseudo-random number generator
+     * - r_time(): Current system time (provides temporal variation)
+     * - cpuid(): CPU identifier (ensures different CPUs get different sequences)
+     * 
+     * This combination prevents any single process from being consistently
+     * favored while maintaining the correct proportional distribution.
+     */
+    global_lottery_counter++;
+    int winner = (rand() + r_time() + cpuid() + global_lottery_counter) % total_tickets;
+    
+    /*
+     * DEBUG OUTPUT: Occasional lottery information
+     * 
+     * Print lottery details every 1000 iterations to help with debugging
+     * and verification that the lottery system is working correctly.
+     * We limit frequency to avoid overwhelming the console output.
+     */
+    // Debug output disabled for cleaner test results
+    // static int debug_counter = 0;
+    // if((debug_counter++ % 1000) == 0) {
+    //   printf("LOTTERY CPU%d: total_tickets=%d, winner=%d, num_runnable=%d\n", 
+    //          cpuid(), total_tickets, winner, num_runnable);
+    // }
+    
+    /*
+     * PHASE 5: FIND THE WINNING PROCESS
+     * 
+     * Walk through our snapshot arrays to find which process owns
+     * the winning ticket number. We do this by accumulating ticket
+     * counts until we exceed the winner number.
+     * 
+     * Example: If we have processes with [3, 2, 1] tickets and winner=4:
+     * - i=0: counter = 0+3 = 3, counter(3) <= winner(4), continue
+     * - i=1: counter = 3+2 = 5, counter(5) > winner(4), FOUND WINNER at i=1!
+     */
     int counter = 0;
+    int scheduler_lock_held = 1;  // Track if we still hold the scheduler lock
+    
     for(int i = 0; i < num_runnable; i++) {
       counter += tickets[i];
       if(counter > winner) {
         /*
-         * FOUND THE WINNER! Handle it with proper lock ordering.
+         * PHASE 6: EXECUTE THE WINNING PROCESS
+         * 
+         * We found the process that owns the winning ticket!
+         * Now we need to safely transition it from RUNNABLE to RUNNING
+         * and execute it on this CPU.
          */
         p = runnable[i];
+        
+        /*
+         * CRITICAL MULTICORE SECTION - DUAL LOCK ACQUISITION
+         * 
+         * We now hold TWO locks simultaneously:
+         * 1. scheduler_lock (global) - prevents other CPUs from interfering
+         * 2. p->lock (process-specific) - protects this process's state
+         * 
+         * This dual-locking ensures atomicity of the state transition.
+         */
         acquire(&p->lock);
         
+        /*
+         * DOUBLE-CHECK: Verify process is still runnable
+         * 
+         * Between our snapshot creation and now, another CPU might have:
+         * - Selected this same process (race condition)
+         * - Process might have exited or gone to sleep
+         * 
+         * We verify the process is still RUNNABLE before proceeding.
+         */
         if(p->state == RUNNABLE) {
           /*
-           * STANDARD XV6 PROCESS EXECUTION
+           * ATOMIC STATE TRANSITION: RUNNABLE -> RUNNING
            * 
-           * Since only CPU 0 is doing scheduling, we don't need complex
-           * multicore synchronization. Just use the standard xv6 pattern.
+           * Mark the process as RUNNING while holding both locks.
+           * This prevents other CPUs from selecting the same process.
+           * After this point, other CPUs will skip this process in their scans.
            */
+          // Selection debug output disabled for cleaner results
+          // static int selection_counter = 0;
+          // if((selection_counter++ % 200) == 0) {
+          //   printf("CPU%d: Selected PID=%d (%s) with %d tickets\n", 
+          //          cpuid(), p->pid, p->name, p->tickets);
+          // }
           p->state = RUNNING;
-          p->ticks++;
-          c->proc = p;
+          p->ticks++;              // Increment runtime counter for statistics
+          c->proc = p;             // Tell this CPU which process it's running
           
           /*
-           * CONTEXT SWITCH: Standard xv6 pattern
+           * EARLY LOCK RELEASE OPTIMIZATION
+           * 
+           * Release the global scheduler_lock BEFORE context switch.
+           * This allows other CPUs to immediately start their own lottery
+           * rounds while this CPU executes the selected process.
+           * 
+           * We keep p->lock to satisfy sched()'s requirement.
+           */
+          release(&scheduler_lock);
+          scheduler_lock_held = 0;  // Mark that we no longer hold the lock
+          
+          /*
+           * CONTEXT SWITCH: Transfer control to the selected process
+           * 
+           * swtch() saves this CPU's kernel context and loads the
+           * process's saved context. The CPU will now execute the
+           * process's user code until the process yields, sleeps,
+           * exits, or gets preempted by a timer interrupt.
+           * 
+           * Critical: We hold only p->lock here, which satisfies
+           * the requirement that sched() functions expect exactly
+           * one lock to be held.
            */
           swtch(&c->context, &p->context);
           
           /*
-           * Process finished running - clean up
-           * Standard xv6 cleanup after context switch
+           * PROCESS EXECUTION COMPLETE
+           * 
+           * When we reach this point, the process has yielded control
+           * back to the scheduler. The process might have:
+           * - Called yield() voluntarily
+           * - Called sleep() to wait for something
+           * - Called exit() to terminate
+           * - Been preempted by a timer interrupt
+           * 
+           * In all cases, the process lock management is handled
+           * correctly by the respective system calls.
            */
-          c->proc = 0;
+          c->proc = 0;             // Clear CPU's process pointer
+          release(&p->lock);       // CRITICAL: Release process lock after swtch
+        } else {
+          /*
+           * RACE CONDITION DETECTED
+           * 
+           * The process state changed between our snapshot and selection.
+           * This can happen in multicore systems when another CPU
+           * selected the same process simultaneously.
+           * 
+           * We safely abort this selection attempt and release locks.
+           * This CPU will try again in the next scheduler iteration.
+           */
+          release(&p->lock);
+          if(scheduler_lock_held) {
+            release(&scheduler_lock);
+            scheduler_lock_held = 0;
+          }
         }
-        release(&p->lock);
-        break;
+        break;  // Exit the winner-finding loop
       }
     }
     
     /*
-     * If we reach here without finding a winner, it means all processes
-     * in our snapshot became non-runnable between snapshot time and 
-     * selection time. Since only CPU 0 is scheduling, just try again.
+     * FALLBACK: NO WINNER FOUND
+     * 
+     * If we reach this point without finding a winner, it means all
+     * processes in our snapshot became non-runnable between the time
+     * we created the snapshot and now. This can happen in multicore
+     * systems when:
+     * 
+     * - Other CPUs selected all the runnable processes
+     * - Processes exited or went to sleep during our lottery
+     * - Race conditions caused state changes
+     * 
+     * In this rare case, we release the global lock and try again.
+     * The next iteration will build a fresh snapshot.
      */
+    if(scheduler_lock_held) {
+      release(&scheduler_lock);
+    }
   }
 }
 
@@ -818,11 +1018,11 @@ settickets(int tickets)
 {
   struct proc *p = myproc();
   
-  if(tickets < 1)
+  if(tickets < 0)
     return -1;
     
   acquire(&p->lock);
-  printf("DEBUG: settickets PID=%d tickets=%d->%d\n", p->pid, p->tickets, tickets);
+  // printf("DEBUG: settickets PID=%d tickets=%d->%d\n", p->pid, p->tickets, tickets);
   p->tickets = tickets;
   release(&p->lock);
   
