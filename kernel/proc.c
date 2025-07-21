@@ -476,6 +476,7 @@ scheduler(void)
     int total_tickets = 0;
     
     // Single pass: collect all runnable processes atomically
+    // Use proper locking for multi-core safety
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
       if(p->state == RUNNABLE) {
@@ -493,32 +494,14 @@ scheduler(void)
     }
     
     // Pick a random winner ticket number (0 to total_tickets-1)
-    // Use CPU ID and current time for better randomness
+    // Use CPU ID and current time for better randomness across cores
     int winner = (rand() + r_time() + cpuid()) % total_tickets;
     
-    // DEBUG: Print lottery details occasionally
+    // DEBUG: Print lottery details occasionally (less frequent for multi-core)
     static int debug_counter = 0;
-    if((debug_counter++ % 100) == 0) {  // More frequent debugging
-      printf("LOTTERY: total_tickets=%d, winner=%d, num_runnable=%d\n", 
-             total_tickets, winner, num_runnable);
-      printf("RUNNABLE PROCESSES: ");
-      for(int i = 0; i < num_runnable; i++) {
-        printf("PID=%d(tickets=%d) ", runnable[i]->pid, tickets[i]);
-      }
-      printf("\n");
-      
-      // NEW: Print ALL processes
-      printf("=== ALL PROCESSES ===\n");
-      struct proc *pp;
-      for(pp = proc; pp < &proc[NPROC]; pp++) {
-        acquire(&pp->lock);
-        if(pp->state != UNUSED) {
-          printf("PID=%d state=%d tickets=%d name=%s\n", 
-                 pp->pid, pp->state, pp->tickets, pp->name);
-        }
-        release(&pp->lock);
-      }
-      printf("=== END ALL PROCESSES ===\n");
+    if((debug_counter++ % 200) == 0) {  // Less frequent for multi-core
+      printf("LOTTERY CPU%d: total_tickets=%d, winner=%d, num_runnable=%d\n", 
+             cpuid(), total_tickets, winner, num_runnable);
     }
     
     // Find the winning process from our snapshot
@@ -530,13 +513,7 @@ scheduler(void)
         p = runnable[i];
         acquire(&p->lock);
         if(p->state == RUNNABLE) {
-          // DEBUG: Log lottery selection
-          static int lottery_log_counter = 0;
-          if((lottery_log_counter++ % 50) == 0) {
-            printf("LOTTERY SELECT: CPU=%d PID=%d (tickets=%d) winner=%d counter=%d\n", 
-                   cpuid(), p->pid, tickets[i], winner, counter);
-          }
-          
+          // Atomically transition to RUNNING
           p->state = RUNNING;
           p->ticks++;
           c->proc = p;
