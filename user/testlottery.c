@@ -4,173 +4,127 @@
 #include "kernel/pstat.h"
 #include "user/user.h"
 
-#define NFORK     3      // constant for number of child processes
-#define WORKLOOP  100000000
-#define NSAMPLE   30
-#define SLEEP_TICKS 20
-#define NCHILDREN 6      // 6 > 3 CPU
+#define NCHILDREN 6
+#define WORKLOOP  50000000
 
-// CPU-intensive work function - pure CPU bound
 static void
 cpu_work(void) {
-  volatile int i, j = 0;
-  for(i = 0; i < WORKLOOP; i++){  // Back to original long loop
-    j += i * i * i;
-    j %= 1000;
-    // NO SLEEP - let timer interrupt handle scheduling
-  }
+    volatile int i, j = 0;
+    for(i = 0; i < WORKLOOP; i++) {
+        j += i * i * i;
+        j %= 1000;
+    }
+}
+
+static void
+display_distribution(int round) {
+    struct pstat ps;
+    
+    if(getpinfo(&ps) < 0) {
+        printf("ERROR: getpinfo failed\n");
+        return;
+    }
+
+    int group30 = 0, group20 = 0, group10 = 0;
+    int total = 0;
+
+
+    for(int i = 0; i < NPROC; i++) {
+        if(ps.inuse[i] && ps.tickets[i] > 1) {
+            total += ps.ticks[i];
+            if(ps.tickets[i] == 30)    group30 += ps.ticks[i];
+            else if(ps.tickets[i] == 20) group20 += ps.ticks[i];
+            else if(ps.tickets[i] == 10) group10 += ps.ticks[i];
+        }
+    }
+    
+    if(total == 0) {
+        printf("Round %d: Total ticks is still 0\n", round);
+        return;
+    }
+
+    int pct30 = (group30 * 100) / total;
+    int pct20 = (group20 * 100) / total;
+    int pct10 = (group10 * 100) / total;
+
+    // 간단한 출력 (ANSI 코드 없이)
+    printf("\n--- Round %d ---\n", round);
+    printf("30 tickets: %d ticks (%d%%)\n", group30, pct30);
+    printf("20 tickets: %d ticks (%d%%)\n", group20, pct20);
+    printf("10 tickets: %d ticks (%d%%)\n", group10, pct10);
+    printf("Total ticks: %d\n", total);
+    printf("Distribution: %d%% : %d%% : %d%%\n", pct30, pct20, pct10);
+    printf("Expected: 50%% : 33%% : 17%%\n");
+    
+    printf("Graph:\n");
+    printf("30 tickets: ");
+    for(int i = 0; i < pct30/5; i++) printf("#");
+    printf("\n");
+    
+    printf("20 tickets: ");
+    for(int i = 0; i < pct20/5; i++) printf("#");
+    printf("\n");
+    
+    printf("10 tickets: ");
+    for(int i = 0; i < pct10/5; i++) printf("#");
+    printf("\n");
 }
 
 int
 main(int argc, char *argv[]) {
-  struct pstat ps;
-  int pid[NCHILDREN];
-  int tickets[NCHILDREN] = { 30, 20, 10, 30, 20, 10 };  // twice the original tickets
+    int pid[NCHILDREN];
+    int tickets[NCHILDREN] = {30, 20, 10, 30, 20, 10};
 
-  printf("Lottery Scheduler Test: 3:2:1 ratio\n");
-  printf("Expected: A=50%%, B=33%%, C=17%%\n\n");
-  
-  // Set parent process to have minimal tickets but still be schedulable
-  settickets(1);
+    printf("=== LOTTERY SCHEDULER TEST ===\n");
+    printf("Creating 6 processes: 30*2, 20*2, 10*2 tickets\n");
+    printf("Testing 3 groups with 2 processes each\n");
+    printf("Press Ctrl+C to stop...\n\n");
 
-  // 1) Create child processes - NO printf in children to avoid mixed output
-  for(int i = 0; i < NCHILDREN; i++){
-    pid[i] = fork();
-    if(pid[i] == 0){
-      if(settickets(tickets[i]) < 0){
-        printf("ERROR: settickets(%d)\n", tickets[i]);
-        exit(-1);
-      }
-      while(1) cpu_work();
-      exit(0);
+    settickets(1);  // give parent minimal tickets
+
+    // spawn worker processes
+    for(int i = 0; i < NCHILDREN; i++){
+        pid[i] = fork();
+        if(pid[i] == 0) {
+            settickets(tickets[i]);
+            while(1) cpu_work();
+        }
     }
-  }
+    sleep(3);  // allow workers to start
 
-  // IMPORTANT: Wait for all children to set their tickets before sampling
-  printf("\nWaiting for all processes to initialize...\n");
-  sleep(10);  // Give time for all settickets() calls to complete
+    // live monitoring
+    for(int round = 1; round <= 20; round++) {
+        display_distribution(round);
+        sleep(2);
+    }
 
-  printf("\nSampling results:\n");
-
-  // Parent sleeps most of the time to avoid interfering with lottery
-  // Only wake up occasionally to sample results
-  
-  // 2) Sampling loop with proper printf formatting
-  for(int s = 0; s < NSAMPLE; s++){
-    sleep(SLEEP_TICKS);
-
-    if(getpinfo(&ps) == 0){
-      int t[3] = {0,0,0};
-      for(int i = 0; i < NPROC; i++){
-        if(ps.inuse[i]){
-          for(int k = 0; k < NFORK; k++){
-            if(ps.pid[i] == pid[k]){
-              t[k] = ps.ticks[i];
+    // final summary
+    printf("\n=== Test Completed ===\n");
+    struct pstat ps;
+    if(getpinfo(&ps) == 0) {
+        int g30 = 0, g20 = 0, g10 = 0, tot = 0;
+        for(int i = 0; i < NPROC; i++){
+            if(ps.inuse[i] && ps.tickets[i] > 1){
+                tot += ps.ticks[i];
+                if(ps.tickets[i] == 30)    g30 += ps.ticks[i];
+                else if(ps.tickets[i] == 20) g20 += ps.ticks[i];
+                else if(ps.tickets[i] == 10) g10 += ps.ticks[i];
             }
-          }
         }
-      }
-      // Use simple integer formatting to avoid printf issues
-      printf("Sample ");
-      printf("%d", s+1);
-      printf(": A=");
-      printf("%d", t[0]);
-      printf(" B=");
-      printf("%d", t[1]);
-      printf(" C=");
-      printf("%d", t[2]);
-      printf("\n");
+        printf("Final Groups: 30-ticket:%d  20-ticket:%d  10-ticket:%d\n",
+               g30, g20, g10);
+        printf("Percentages: %d%% : %d%% : %d%%\n",
+               g30*100/tot, g20*100/tot, g10*100/tot);
+        if(g30 > g20 && g20 > g10)
+            printf("SUCCESS: Lottery scheduler working!\n");
+        else
+            printf("WARNING: Unexpected results\n");
     }
-  }
 
-  // 3) Collect final tick counts before killing children
-  struct pstat final_ps;
-  int final_ticks[NFORK] = {0, 0, 0};
-  
-  if(getpinfo(&final_ps) == 0){
-    for(int k = 0; k < NFORK; k++){
-      for(int j = 0; j < NPROC; j++){
-        if(final_ps.inuse[j] && final_ps.pid[j] == pid[k]){
-          final_ticks[k] = final_ps.ticks[j];
-          break;
-        }
-      }
+    // cleanup
+    for(int i = 0; i < NCHILDREN; i++){
+        kill(pid[i]);
+        wait(0);
     }
-  }
-
-  // 4) Kill child processes
-  for(int i = 0; i < NFORK; i++){
-    kill(pid[i]);
-    wait(0);
-  }
-
-  // 5) Display results with simple printf calls
-  int total = final_ticks[0] + final_ticks[1] + final_ticks[2];
-  
-  printf("\n=== FINAL RESULTS ===\n");
-  printf("Process A: ");
-  printf("%d", tickets[0]);
-  printf(" tickets, ");
-  printf("%d", final_ticks[0]);
-  printf(" ticks\n");
-  
-  printf("Process B: ");
-  printf("%d", tickets[1]);
-  printf(" tickets, ");
-  printf("%d", final_ticks[1]);
-  printf(" ticks\n");
-  
-  printf("Process C: ");
-  printf("%d", tickets[2]);
-  printf(" tickets, ");
-  printf("%d", final_ticks[2]);
-  printf(" ticks\n");
-  
-  printf("Total: ");
-  printf("%d", total);
-  printf(" ticks\n");
-
-  if(total > 0) {
-    int pctA = final_ticks[0] * 100 / total;
-    int pctB = final_ticks[1] * 100 / total;
-    int pctC = final_ticks[2] * 100 / total;
-    
-    printf("\nActual percentages:\n");
-    printf("A: ");
-    printf("%d", pctA);
-    printf("%%, B: ");
-    printf("%d", pctB);
-    printf("%%, C: ");
-    printf("%d", pctC);
-    printf("%%\n");
-    
-    // ASCII bar chart
-    printf("\nASCII Bar Chart:\n");
-    printf("A (");
-    printf("%d", pctA);
-    printf("%%) ");
-    for(int i = 0; i < pctA/2; i++) printf("#");
-    printf("\n");
-    
-    printf("B (");
-    printf("%d", pctB);
-    printf("%%) ");
-    for(int i = 0; i < pctB/2; i++) printf("#");
-    printf("\n");
-    
-    printf("C (");
-    printf("%d", pctC);
-    printf("%%) ");
-    for(int i = 0; i < pctC/2; i++) printf("#");
-    printf("\n");
-    
-    // Success/failure determination
-    if(final_ticks[0] > final_ticks[1] && final_ticks[1] > final_ticks[2]) {
-      printf("\nSUCCESS: Lottery scheduler working!\n");
-    } else {
-      printf("\nWARNING: Lottery scheduler not working properly\n");
-    }
-  }
-
-  exit(0);
+    exit(0);
 }
