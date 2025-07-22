@@ -27,8 +27,8 @@ display_distribution(int round) {
 
     int group30 = 0, group20 = 0, group10 = 0;
     int total = 0;
-
-
+    
+    // 프로세스별 상태 확인
     for(int i = 0; i < NPROC; i++) {
         if(ps.inuse[i] && ps.tickets[i] > 1) {
             total += ps.ticks[i];
@@ -47,7 +47,7 @@ display_distribution(int round) {
     int pct20 = (group20 * 100) / total;
     int pct10 = (group10 * 100) / total;
 
-    // 간단한 출력 (ANSI 코드 없이)
+    // 완전 단순 출력
     printf("\n--- Round %d ---\n", round);
     printf("30 tickets: %d ticks (%d%%)\n", group30, pct30);
     printf("20 tickets: %d ticks (%d%%)\n", group20, pct20);
@@ -56,18 +56,50 @@ display_distribution(int round) {
     printf("Distribution: %d%% : %d%% : %d%%\n", pct30, pct20, pct10);
     printf("Expected: 50%% : 33%% : 17%%\n");
     
-    printf("Graph:\n");
-    printf("30 tickets: ");
-    for(int i = 0; i < pct30/5; i++) printf("#");
-    printf("\n");
+    // 그래프 추가
+    printf("\nGraph (|==== real, ---- expected):\n");
+
+    // 30 tickets 그래프
+    printf("30t: |");
+    for(int i = 0; i < 20; i++) {
+        if(i < pct30/5) printf("=");
+        else printf(" ");
+    }
+    printf("| %d%%", pct30);
+    printf("\n     |");
+    for(int i = 0; i < 20; i++) {
+        if(i < 10) printf("-");  // 50% = 10 bars
+        else printf(" ");
+    }
+    printf("| 50%%\n");
     
-    printf("20 tickets: ");
-    for(int i = 0; i < pct20/5; i++) printf("#");
-    printf("\n");
+    // 20 tickets 그래프
+    printf("20t: |");
+    for(int i = 0; i < 20; i++) {
+        if(i < pct20/5) printf("=");
+        else printf(" ");
+    }
+    printf("| %d%%", pct20);
+    printf("\n     |");
+    for(int i = 0; i < 20; i++) {
+        if(i < 6) printf("-");  // 33% ~= 6.6 bars
+        else printf(" ");
+    }
+    printf("| 33%%\n");
     
-    printf("10 tickets: ");
-    for(int i = 0; i < pct10/5; i++) printf("#");
-    printf("\n");
+    // 10 tickets 그래프
+    printf("10t: |");
+    for(int i = 0; i < 20; i++) {
+        if(i < pct10/5) printf("=");
+        else printf(" ");
+    }
+    printf("| %d%%", pct10);
+    printf("\n     |");
+    for(int i = 0; i < 20; i++) {
+        if(i < 3) printf("-");  // 17% ~= 3.4 bars
+        else printf(" ");
+    }
+    printf("| 17%%\n");
 }
 
 int
@@ -78,22 +110,19 @@ main(int argc, char *argv[]) {
     printf("=== LOTTERY SCHEDULER TEST ===\n");
     printf("Creating 6 processes: 30*2, 20*2, 10*2 tickets\n");
     printf("Testing 3 groups with 2 processes each\n");
-    printf("Press Ctrl+C to stop...\n\n");
 
     settickets(1);  // give parent minimal tickets
 
-    // spawn worker processes
     for(int i = 0; i < NCHILDREN; i++){
         pid[i] = fork();
-        if(pid[i] == 0) {
+        if(pid[i] == 0){
             settickets(tickets[i]);
             while(1) cpu_work();
         }
     }
     sleep(3);  // allow workers to start
 
-    // live monitoring
-    for(int round = 1; round <= 20; round++) {
+    for(int round = 1; round <= 20; round++){
         display_distribution(round);
         sleep(2);
     }
@@ -101,7 +130,7 @@ main(int argc, char *argv[]) {
     // final summary
     printf("\n=== Test Completed ===\n");
     struct pstat ps;
-    if(getpinfo(&ps) == 0) {
+    if(getpinfo(&ps) == 0){
         int g30 = 0, g20 = 0, g10 = 0, tot = 0;
         for(int i = 0; i < NPROC; i++){
             if(ps.inuse[i] && ps.tickets[i] > 1){
