@@ -78,12 +78,11 @@ usertrap(void)
 
   // give up the CPU if this is a timer interrupt.
   if(which_dev == 2) {
-    // Track CPU time for lottery scheduler
     struct proc *p = myproc();
     if(p != 0) {
-        p->ticks++;
+      p->ticks++;
+      yield();
     }
-    yield();
   }
 
   usertrapret();
