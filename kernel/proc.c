@@ -47,9 +47,6 @@ struct spinlock scheduler_lock;
  */
 static int global_lottery_counter = 0;  // Global counter for lottery fairness
 
-// External declaration - defined in main.c
-extern int read_count;
-
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
 // guard page.

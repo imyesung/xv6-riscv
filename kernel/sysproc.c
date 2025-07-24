@@ -96,8 +96,6 @@ sys_uptime(void)
   return xticks;
 }
 
-extern int read_count;  // Direct access to global counter
-
 uint64
 sys_getreadcount(void)
 {
