@@ -1,3 +1,5 @@
+#include "types.h"
+
 // Saved registers for kernel context switches.
 struct context {
   uint64 ra;
@@ -106,6 +108,6 @@ struct proc {
   char name[16];               // Process name (debugging)
   
   // Lottery scheduler fields
-  int tickets;                 // Number of lottery tickets
-  int ticks;                   // Number of times scheduled
+  uint tickets;                // Number of lottery tickets
+  uint64 ticks;                // Number of times scheduled
 };
