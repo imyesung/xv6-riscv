@@ -635,7 +635,7 @@ scheduler(void)
      * favored while maintaining the correct proportional distribution.
      */
     global_lottery_counter++;
-    int winner = (rand() + r_time() + cpuid() + global_lottery_counter) % total_tickets;
+    int winner = ((uint64)rand() * total_tickets) / 32768;
     
     /*
      * DEBUG OUTPUT: Occasional lottery information
