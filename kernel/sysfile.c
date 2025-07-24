@@ -16,6 +16,9 @@
 #include "file.h"
 #include "fcntl.h"
 
+// Global counter for read system calls
+int read_count = 0;
+
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
 static int
@@ -80,8 +83,8 @@ sys_read(void)
   argaddr(1, &p);
   argint(2, &n);
 
-  // Count valid read calls
-  read_count++;
+  // Count valid read calls using atomic operation
+  __sync_fetch_and_add(&read_count, 1);
 
   // Do the actual work
   return fileread(f, p, n);
