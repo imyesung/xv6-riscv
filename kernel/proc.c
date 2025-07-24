@@ -315,7 +315,6 @@ growproc(int n)
 
 // Create a new process, copying the parent.
 // Sets up child kernel stack to return as if from fork() system call.
-// fork() 함수 전체를 아래 코드로 교체하세요.
 
 int
 fork(void)
@@ -356,14 +355,15 @@ fork(void)
 
   pid = np->pid;
 
-  // After all setup is done, set parent and state.
+  // Deadlock prevention: release np->lock temporarily to acquire wait_lock first
+  release(&np->lock);
   acquire(&wait_lock);
   np->parent = p;
   release(&wait_lock);
-  
+
+  // Re-acquire np->lock and set state
+  acquire(&np->lock);
   np->state = RUNNABLE;
-  
-  // Finally, release the lock.
   release(&np->lock);
 
   return pid;
