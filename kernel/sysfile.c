@@ -17,7 +17,7 @@
 #include "fcntl.h"
 
 // Global counter for read system calls
-extern int read_count;
+extern uint64 read_count;
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.

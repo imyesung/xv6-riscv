@@ -146,7 +146,7 @@ int             fetchaddr(uint64, uint64*);
 void            syscall();
 
 // Global counter for tracking read() system call invocations
-extern int read_count;  // Counter for read() syscall tracking since boot
+extern uint64 read_count;  // Counter for read() syscall tracking since boot
 
 // trap.c
 extern uint     ticks;
