@@ -27,20 +27,6 @@ extern char trampoline[]; // trampoline.S
 // must be acquired before any p->lock.
 struct spinlock wait_lock;
 
-/*
- * GLOBAL SCHEDULER LOCK: Prevents multiple CPUs from simultaneously
- * executing the lottery scheduling algorithm. This ensures that only
- * one CPU at a time can scan processes, perform lottery selection,
- * and assign a process to run.
- *
- * Without this lock: Multiple CPUs might select the same process to run,
- * causing race conditions and incorrect scheduler behavior.
- *
- * With this lock: CPUs take turns performing scheduling decisions,
- * ensuring each process is selected by only one CPU at a time.
- */
-struct spinlock scheduler_lock;
-
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
 // guard page.
@@ -66,13 +52,6 @@ procinit(void)
 
   initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
-
-  /*
-   * Initialize the global scheduler lock. This lock will be used to ensure
-   * that only one CPU at a time can execute the lottery scheduling algorithm.
-   * The name "scheduler" helps with debugging if deadlocks occur.
-   */
-  initlock(&scheduler_lock, "scheduler");
 
   // Initialize random number generator
   randinit();
@@ -481,59 +460,67 @@ scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
-
+  
   c->proc = 0;
-  for(;;){
-    // each CPU independently performs lottery selection
-    struct proc *runnable[NPROC];
-    int tickets[NPROC];
-    int num_runnable = 0;
-    int total_tickets = 0;
-
+  for(;;) {
+    // Enable interrupts
     intr_on();
 
-    // PHASE 1: count runnable processes and their tickets
+    // Calculate total tickets for runnable processes
+    uint total = 0;
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
       if(p->state == RUNNABLE) {
-        runnable[num_runnable] = p;
-        tickets[num_runnable] = p->tickets;
-        total_tickets += tickets[num_runnable];
-        num_runnable++;
+        total += (p->tickets > 0) ? p->tickets : 1;
       }
       release(&p->lock);
     }
 
-    if(total_tickets == 0) {
+    if(total == 0) {
+      continue;  // idle - no RUNNABLE processes
+    }
+
+    // randomly select a winner based on the total tickets
+    uint winner = (rand() % total) + 1;
+
+    // Find the winning process
+    uint counter = 0;
+    struct proc *picked = 0;
+    
+    for(p = proc; p < &proc[NPROC]; p++) {
+      acquire(&p->lock);
+      if(p->state == RUNNABLE) {
+        counter += (p->tickets > 0) ? p->tickets : 1;
+        if(counter >= winner) {
+          picked = p;
+          break;
+        }
+      }
+      release(&p->lock);
+    }
+
+    // If no winner is found, retry
+    if(!picked) {
       continue;
     }
 
-    // PHASE 2: lottery selection
-    int winner = ((uint64)rand() * total_tickets) / 32768;
+    // We already hold picked's lock
+    if(picked->state == RUNNABLE) {
+      picked->state = RUNNING;
+      picked->ticks++;  // Increment execution time count
+      c->proc = picked;
+      swtch(&c->context, &picked->context);
 
-    // find the winning process
-    int counter = 0;
-    for(int i = 0; i < num_runnable; i++) {
-      counter += tickets[i];
-      if(counter > winner) {
-        p = runnable[i];
-        acquire(&p->lock);
-
-        // If the process is still runnable, switch to it
-        if(p->state == RUNNABLE) {
-          p->state = RUNNING;
-          c->proc = p;
-          #ifdef DEBUG
-          printf("CPU%d selected PID=%d (tickets=%d/%d)\n",
-                 cpuid(), p->pid, p->tickets, total_tickets);
-          #endif
-          swtch(&c->context, &p->context);
-          c->proc = 0;
-        }
-        release(&p->lock);
-        break;
-      }
+      // Process is done running for now.
+      // It should have changed its p->state before coming back.
+      c->proc = 0;
     }
+    release(&picked->lock);
+
+    // Give other CPUs a chance
+    #ifdef CFS
+    yield();
+    #endif
   }
 }
 
