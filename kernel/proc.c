@@ -714,27 +714,34 @@ either_copyin(void *dst, int user_src, uint64 src, uint64 len)
 void
 procdump(void)
 {
-  static char *states[] = {
-  [UNUSED]    "unused",
-  [USED]      "used",
-  [SLEEPING]  "sleep ",
-  [RUNNABLE]  "runble",
-  [RUNNING]   "run   ",
-  [ZOMBIE]    "zombie"
-  };
   struct proc *p;
-  char *state;
+  static const char *states[] = {
+    [UNUSED]    "unused",
+    [USED]      "used",
+    [SLEEPING]  "sleep ",
+    [RUNNABLE]  "runble",
+    [RUNNING]   "run   ",
+    [ZOMBIE]    "zombie"
+  };
 
   printf("\n");
   for(p = proc; p < &proc[NPROC]; p++){
-    if(p->state == UNUSED)
+    acquire(&p->lock);
+    int st = p->state;
+    if(st == UNUSED){
+      release(&p->lock);
       continue;
-    if(p->state >= 0 && p->state < NELEM(states) && states[p->state])
-      state = states[p->state];
-    else
-      state = "???";
-    printf("%d %s %s", p->pid, state, p->name);
-    printf("\n");
+    }
+    // Get state string safely
+    const char *state = (st >= 0 && st < NELEM(states) && states[st]) ? states[st] : "???";
+
+    // Copy process name to local buffer for safety
+    char namebuf[16];
+    safestrcpy(namebuf, p->name, sizeof(namebuf));
+    int pid = p->pid;
+    release(&p->lock);
+
+    printf("%d %s %s\n", pid, state, namebuf);
   }
 }
 
