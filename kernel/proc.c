@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "pstat.h"
 
 struct cpu cpus[NCPU];
 
@@ -33,7 +34,7 @@ void
 proc_mapstacks(pagetable_t kpgtbl)
 {
   struct proc *p;
-  
+
   for(p = proc; p < &proc[NPROC]; p++) {
     char *pa = kalloc();
     if(pa == 0)
@@ -48,9 +49,13 @@ void
 procinit(void)
 {
   struct proc *p;
-  
+
   initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
+
+  // Initialize random number generator
+  randinit();
+
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
       p->state = UNUSED;
@@ -93,7 +98,7 @@ int
 allocpid()
 {
   int pid;
-  
+
   acquire(&pid_lock);
   pid = nextpid;
   nextpid = nextpid + 1;
@@ -124,6 +129,10 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+
+  // Initialize lottery scheduler fields
+  p->tickets = 1;
+  p->ticks = 0;
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -236,7 +245,7 @@ userinit(void)
 
   p = allocproc();
   initproc = p;
-  
+
   // allocate one user page and copy initcode's instructions
   // and data into it.
   uvmfirst(p->pagetable, initcode, sizeof(initcode));
@@ -276,6 +285,7 @@ growproc(int n)
 
 // Create a new process, copying the parent.
 // Sets up child kernel stack to return as if from fork() system call.
+
 int
 fork(void)
 {
@@ -296,6 +306,9 @@ fork(void)
   }
   np->sz = p->sz;
 
+  // Set tickets for the new process.
+  np->tickets = p->tickets; // Inherit tickets from parent.
+
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
 
@@ -312,12 +325,13 @@ fork(void)
 
   pid = np->pid;
 
+  // Deadlock prevention: release np->lock temporarily to acquire wait_lock first
   release(&np->lock);
-
   acquire(&wait_lock);
   np->parent = p;
   release(&wait_lock);
 
+  // Re-acquire np->lock and set state
   acquire(&np->lock);
   np->state = RUNNABLE;
   release(&np->lock);
@@ -372,7 +386,7 @@ exit(int status)
 
   // Parent might be sleeping in wait().
   wakeup(p->parent);
-  
+
   acquire(&p->lock);
 
   p->xstate = status;
@@ -428,7 +442,7 @@ wait(uint64 addr)
       release(&wait_lock);
       return -1;
     }
-    
+
     // Wait for a child to exit.
     sleep(p, &wait_lock);  //DOC: wait-sleep
   }
@@ -446,37 +460,67 @@ scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
-
+  
   c->proc = 0;
-  for(;;){
-    // The most recent process to run may have had interrupts
-    // turned off; enable them to avoid a deadlock if all
-    // processes are waiting.
+  for(;;) {
+    // Enable interrupts
     intr_on();
 
-    int found = 0;
+    // Calculate total tickets for runnable processes
+    uint total = 0;
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
       if(p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
-        p->state = RUNNING;
-        c->proc = p;
-        swtch(&c->context, &p->context);
-
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
-        c->proc = 0;
-        found = 1;
+        total += (p->tickets > 0) ? p->tickets : 1;
       }
       release(&p->lock);
     }
-    if(found == 0) {
-      // nothing to run; stop running on this core until an interrupt.
-      intr_on();
-      asm volatile("wfi");
+
+    if(total == 0) {
+      continue;  // idle - no RUNNABLE processes
     }
+
+    // randomly select a winner based on the total tickets
+    uint winner = (rand() % total) + 1;
+
+    // Find the winning process
+    uint counter = 0;
+    struct proc *picked = 0;
+    
+    for(p = proc; p < &proc[NPROC]; p++) {
+      acquire(&p->lock);
+      if(p->state == RUNNABLE) {
+        counter += (p->tickets > 0) ? p->tickets : 1;
+        if(counter >= winner) {
+          picked = p;
+          break;
+        }
+      }
+      release(&p->lock);
+    }
+
+    // If no winner is found, retry
+    if(!picked) {
+      continue;
+    }
+
+    // We already hold picked's lock
+    if(picked->state == RUNNABLE) {
+      picked->state = RUNNING;
+      picked->ticks++;  // Increment dispatch count when process is selected
+      c->proc = picked;
+      swtch(&c->context, &picked->context);
+
+      // Process is done running for now.
+      // It should have changed its p->state before coming back.
+      c->proc = 0;
+    }
+    release(&picked->lock);
+
+    // Give other CPUs a chance
+    #ifdef CFS
+    yield();
+    #endif
   }
 }
 
@@ -548,7 +592,7 @@ void
 sleep(void *chan, struct spinlock *lk)
 {
   struct proc *p = myproc();
-  
+
   // Must acquire p->lock in order to
   // change p->state and then call sched.
   // Once we hold p->lock, we can be
@@ -627,7 +671,7 @@ int
 killed(struct proc *p)
 {
   int k;
-  
+
   acquire(&p->lock);
   k = p->killed;
   release(&p->lock);
@@ -670,26 +714,87 @@ either_copyin(void *dst, int user_src, uint64 src, uint64 len)
 void
 procdump(void)
 {
-  static char *states[] = {
-  [UNUSED]    "unused",
-  [USED]      "used",
-  [SLEEPING]  "sleep ",
-  [RUNNABLE]  "runble",
-  [RUNNING]   "run   ",
-  [ZOMBIE]    "zombie"
-  };
   struct proc *p;
-  char *state;
+  static const char *states[] = {
+    [UNUSED]    "unused",
+    [USED]      "used",
+    [SLEEPING]  "sleep ",
+    [RUNNABLE]  "runble",
+    [RUNNING]   "run   ",
+    [ZOMBIE]    "zombie"
+  };
 
   printf("\n");
   for(p = proc; p < &proc[NPROC]; p++){
-    if(p->state == UNUSED)
+    acquire(&p->lock);
+    int st = p->state;
+    if(st == UNUSED){
+      release(&p->lock);
       continue;
-    if(p->state >= 0 && p->state < NELEM(states) && states[p->state])
-      state = states[p->state];
-    else
-      state = "???";
-    printf("%d %s %s", p->pid, state, p->name);
-    printf("\n");
+    }
+    // Get state string safely
+    const char *state = (st >= 0 && st < NELEM(states) && states[st]) ? states[st] : "???";
+
+    // Copy process name to local buffer for safety
+    char namebuf[16];
+    safestrcpy(namebuf, p->name, sizeof(namebuf));
+    int pid = p->pid;
+    release(&p->lock);
+
+    printf("%d %s %s\n", pid, state, namebuf);
   }
+}
+
+// Set the number of tickets for the calling process
+int
+settickets(int tickets)
+{
+  struct proc *p = myproc();
+
+  if(tickets < 0)
+    return -1;
+
+  acquire(&p->lock);
+  // printf("DEBUG: settickets PID=%d tickets=%d->%d\n", p->pid, p->tickets, tickets);
+  p->tickets = tickets;
+  release(&p->lock);
+
+  return 0;
+}
+
+// Get process information for all processes
+int
+getpinfo(uint64 addr)
+{
+  struct proc *p;
+  struct pstat ps;
+  int i = 0;
+
+  // Initialize pstat structure
+  for(int j = 0; j < NPROC; j++) {
+    ps.inuse[j] = 0;
+    ps.tickets[j] = 0;
+    ps.pid[j] = 0;
+    ps.ticks[j] = 0;
+  }
+
+  for(p = proc; p < &proc[NPROC] && i < NPROC; p++) {
+    acquire(&p->lock);
+    if(p->state != UNUSED) {
+      ps.inuse[i] = 1;
+      // Safe casting from uint to int for tickets
+      ps.tickets[i] = (p->tickets > INT_MAX) ? INT_MAX : (int)p->tickets;
+      ps.pid[i] = (int)p->pid;
+      // Safe casting from uint64 to int for ticks
+      ps.ticks[i] = (p->ticks > INT_MAX) ? INT_MAX : (int)p->ticks;
+      i++;
+    }
+    release(&p->lock);
+  }
+
+  // Copy to user space
+  if(copyout(myproc()->pagetable, addr, (char*)&ps, sizeof(ps)) < 0)
+    return -1;
+
+  return 0;
 }

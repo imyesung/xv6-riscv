@@ -1,3 +1,10 @@
+### Lottery Scheduler Result (snapshot)
+CLI-only test; code prints table/graph in console. Below is a single snapshot from Round 20.
+
+<img src="docs/lottery/fig/xv6-lottery-scheduler-round20.png" width="720" alt="Lottery distribution converges to 50:33:17 at Round 20">
+
+---
+
 xv6 is a re-implementation of Dennis Ritchie's and Ken Thompson's Unix
 Version 6 (v6).  xv6 loosely follows the structure and style of v6,
 but is implemented for a modern RISC-V multiprocessor using ANSI C.

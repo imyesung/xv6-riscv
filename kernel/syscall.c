@@ -102,8 +102,12 @@ extern uint64 sys_link(void);
 extern uint64 sys_mkdir(void);
 extern uint64 sys_close(void);
 
-// An array mapping syscall numbers from syscall.h
-// to the function that handles the system call.
+// Custom syscalls - keep them grouped
+extern uint64 sys_stacktrace(void);
+extern uint64 sys_getreadcount(void);
+extern uint64 sys_settickets(void);
+extern uint64 sys_getpinfo(void);
+
 static uint64 (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
 [SYS_exit]    sys_exit,
@@ -112,20 +116,24 @@ static uint64 (*syscalls[])(void) = {
 [SYS_read]    sys_read,
 [SYS_kill]    sys_kill,
 [SYS_exec]    sys_exec,
+[SYS_open]    sys_open,
+[SYS_mknod]   sys_mknod,
+[SYS_unlink]  sys_unlink,
 [SYS_fstat]   sys_fstat,
+[SYS_link]    sys_link,
+[SYS_mkdir]   sys_mkdir,
 [SYS_chdir]   sys_chdir,
 [SYS_dup]     sys_dup,
 [SYS_getpid]  sys_getpid,
 [SYS_sbrk]    sys_sbrk,
 [SYS_sleep]   sys_sleep,
 [SYS_uptime]  sys_uptime,
-[SYS_open]    sys_open,
 [SYS_write]   sys_write,
-[SYS_mknod]   sys_mknod,
-[SYS_unlink]  sys_unlink,
-[SYS_link]    sys_link,
-[SYS_mkdir]   sys_mkdir,
 [SYS_close]   sys_close,
+[SYS_stacktrace] sys_stacktrace,
+[SYS_getreadcount] sys_getreadcount,
+[SYS_settickets] sys_settickets,
+[SYS_getpinfo] sys_getpinfo,
 };
 
 void

@@ -1,4 +1,5 @@
 struct stat;
+struct pstat;
 
 // system calls
 int fork(void);
@@ -22,6 +23,12 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
+
+// Custom system calls
+uint64 getreadcount(void); 
+int stacktrace(uint64 *buf, int max);
+int settickets(int);
+int getpinfo(struct pstat*);
 
 // ulib.c
 int stat(const char*, struct stat*);

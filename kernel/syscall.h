@@ -20,3 +20,9 @@
 #define SYS_link   19
 #define SYS_mkdir  20
 #define SYS_close  21
+
+// Custom syscalls - keep numbers sequential and grouped
+#define SYS_stacktrace    22  
+#define SYS_getreadcount  23
+#define SYS_settickets    24
+#define SYS_getpinfo      25
