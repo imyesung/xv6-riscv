@@ -778,14 +778,15 @@ getpinfo(uint64 addr)
     ps.ticks[j] = 0;
   }
 
-  // Fill in process information
   for(p = proc; p < &proc[NPROC] && i < NPROC; p++) {
     acquire(&p->lock);
     if(p->state != UNUSED) {
       ps.inuse[i] = 1;
-      ps.tickets[i] = p->tickets;
-      ps.pid[i] = p->pid;
-      ps.ticks[i] = p->ticks;
+      // Safe casting from uint to int for tickets
+      ps.tickets[i] = (p->tickets > INT_MAX) ? INT_MAX : (int)p->tickets;
+      ps.pid[i] = (int)p->pid;
+      // Safe casting from uint64 to int for ticks
+      ps.ticks[i] = (p->ticks > INT_MAX) ? INT_MAX : (int)p->ticks;
       i++;
     }
     release(&p->lock);
