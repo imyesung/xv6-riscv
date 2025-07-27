@@ -5,7 +5,7 @@
 #include "defs.h"
 
 // Global syscall statistics
-int read_count = 0;     // Count read() syscalls since boot
+uint64 read_count = 0;     // Count read() syscalls since boot
 // Add other syscall stats here if needed
 
 volatile static int started = 0;

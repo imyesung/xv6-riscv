@@ -25,7 +25,7 @@ int sleep(int);
 int uptime(void);
 
 // Custom system calls
-int getreadcount(void); 
+uint64 getreadcount(void); 
 int stacktrace(uint64 *buf, int max);
 int settickets(int);
 int getpinfo(struct pstat*);

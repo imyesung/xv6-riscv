@@ -109,7 +109,7 @@ int             getpinfo(uint64);
 int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
-int             getreadcount(void);  // Track read() syscall count
+uint64             getreadcount(void);  // Track read() syscall count
 
 // swtch.S
 void            swtch(struct context*, struct context*);
@@ -146,7 +146,7 @@ int             fetchaddr(uint64, uint64*);
 void            syscall();
 
 // Global counter for tracking read() system call invocations
-extern int read_count;  // Counter for read() syscall tracking since boot
+extern uint64 read_count;  // Counter for read() syscall tracking since boot
 
 // trap.c
 extern uint     ticks;

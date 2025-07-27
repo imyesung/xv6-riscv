@@ -96,8 +96,6 @@ sys_uptime(void)
   return xticks;
 }
 
-extern int read_count;  // Direct access to global counter
-
 uint64
 sys_getreadcount(void)
 {
@@ -147,7 +145,11 @@ sys_settickets(void)
 {
   int tickets;
   argint(0, &tickets);
-  
+
+  // Validate input: only allow values >= 1
+  if(tickets < 1)
+    return -1;
+
   return settickets(tickets);
 }
 
