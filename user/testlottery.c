@@ -5,10 +5,13 @@
 #include "user/user.h"
 
 // Configuration for oversubscription test
-#define NWORKERS 3     // Number of worker processes (30:20:10 tickets)
-#define NNOISE 16      // Number of noise processes (1 ticket each)
-#define NROUNDS 20     // Number of measurement rounds
-#define WORKLOOP 50000000  // CPU work iterations
+#define NWORKERS_PER_GROUP 3  // Number of workers per ticket group
+#define NGROUPS 3            // Number of different ticket groups
+#define NWORKERS (NWORKERS_PER_GROUP * NGROUPS)  // Total number of workers
+#define NNOISE 4             // Reduced noise processes
+#define NROUNDS 20           // Number of measurement rounds
+#define INTERVAL 300         // Increased measurement interval
+#define WORKLOOP 100000000   // Increased work iterations
 
 static void
 cpu_work(void) {
@@ -117,22 +120,32 @@ int
 main(int argc, char *argv[]) {
     int wpid[NWORKERS];   // Worker process IDs
     int npid[NNOISE];     // Noise process IDs
-    int tickets[NWORKERS] = {30, 20, 10};  // 3:2:1 ratio (total 60)
+    int tickets[NGROUPS] = {30, 20, 10};  // 3:2:1 ratio
 
     printf("=== LOTTERY SCHEDULER OVERSUBSCRIPTION TEST ===\n");
-    printf("Workers: %d (30:20:10 tickets)\n", NWORKERS);
-    printf("Noise processes: %d (1 ticket each)\n", NNOISE);
-    printf("Total processes: %d on %d CPUs\n", NWORKERS + NNOISE, NCPU);
+    printf("Workers per group: %d\n", NWORKERS_PER_GROUP);
+    printf("Groups: %d (30:20:10 tickets)\n", NGROUPS);
+    printf("Total workers: %d\n", NWORKERS);
+    printf("Total group tickets: %d (90:60:30, total 180)\n", 
+           NWORKERS_PER_GROUP * (30 + 20 + 10));
+    printf("Noise processes: %d (1 ticket each, total %d)\n", NNOISE, NNOISE);
+    printf("Total tickets in system: %d\n", (NWORKERS_PER_GROUP * (30 + 20 + 10)) + NNOISE);
+    printf("Noise ratio: %.1f%%\n", 
+           (NNOISE * 100.0)/((NWORKERS_PER_GROUP * (30 + 20 + 10)) + NNOISE));
     printf("Expected ratio - 50%% : 33%% : 17%%\n\n");
 
     settickets(1);  // Parent process gets minimal tickets
 
-    // Create worker processes
-    for(int i = 0; i < NWORKERS; i++) {
-        wpid[i] = fork();
-        if(wpid[i] == 0) {
-            settickets(tickets[i]);
-            while(1) cpu_work();
+    // Create worker processes for each group
+    int worker_idx = 0;
+    for(int group = 0; group < NGROUPS; group++) {
+        for(int i = 0; i < NWORKERS_PER_GROUP; i++) {
+            wpid[worker_idx] = fork();
+            if(wpid[worker_idx] == 0) {
+                settickets(tickets[group]);
+                while(1) cpu_work();
+            }
+            worker_idx++;
         }
     }
 
@@ -145,12 +158,12 @@ main(int argc, char *argv[]) {
         }
     }
 
-    sleep(3);  // Allow processes to start
+    sleep(5);  // Allow processes to start
 
     // Monitor distribution for multiple rounds
     for(int round = 1; round <= NROUNDS; round++) {
         display_distribution(round);
-        sleep(2);
+        sleep(3);
     }
 
     // Show final results
