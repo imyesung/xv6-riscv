@@ -109,5 +109,5 @@ struct proc {
   
   // Lottery scheduler fields
   uint tickets;                // Number of lottery tickets
-  uint64 ticks;                // Number of times scheduled
+  uint64 ticks;               // Dispatch count: number of times selected by scheduler
 };

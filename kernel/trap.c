@@ -80,7 +80,6 @@ usertrap(void)
   if(which_dev == 2) {
     struct proc *p = myproc();
     if(p != 0) {
-      p->ticks++;
       yield();
     }
   }
@@ -157,7 +156,6 @@ kerneltrap()
 
   // give up the CPU if this is a timer interrupt.
   if(which_dev == 2 && myproc() != 0) {
-    myproc()->ticks++;
     yield();
   }
 

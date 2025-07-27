@@ -507,7 +507,7 @@ scheduler(void)
     // We already hold picked's lock
     if(picked->state == RUNNABLE) {
       picked->state = RUNNING;
-      picked->ticks++;  // Increment execution time count
+      picked->ticks++;  // Increment dispatch count when process is selected
       c->proc = picked;
       swtch(&c->context, &picked->context);
 
